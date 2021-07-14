@@ -74,8 +74,9 @@ void uart_putc(uint8_t c) {
 	HAL_UART_Transmit(&huart2, (uint8_t*) buf, sizeof(buf), 0xFFFF);
 }
 CAN_TxHeaderTypeDef TxHeader;
+CAN_TxHeaderTypeDef TxHeader1;
 
-uint8_t TxData[8]= { 0 };
+uint8_t TxData[8] = { 0 };
 uint32_t TxMailbox;
 uint8_t cnt;
 TIM_Encoder_InitTypeDef sConfig1 = { 0 };
@@ -85,10 +86,20 @@ TIM_MasterConfigTypeDef sMasterConfig1 = { 0 };
 TIM_MasterConfigTypeDef sMasterConfig2 = { 0 };
 TIM_MasterConfigTypeDef sMasterConfig3 = { 0 };
 int32_t rpm[3] = { 0 };
+
+int16_t count[3] = { 0 };
+
 void Count2rpm() {
 	rpm[0] = TIM1->CNT - 30000;
 	rpm[1] = TIM2->CNT - 30000;
 	rpm[2] = TIM3->CNT - 30000;
+	for (int i = 0; i < 2; i++) {
+		count[i] = count[i] + rpm[i];
+		if (count[i] < 0)
+			count[i] = count[i] + 65536;
+		if (count[i] > 65536)
+			count[i] = count[i] - 65536;
+	}
 	TIM1->CNT = 30000;
 	TIM2->CNT = 30000;
 	TIM3->CNT = 30000;
@@ -165,20 +176,35 @@ int main(void) {
 		TxHeader.IDE = CAN_ID_STD;
 		TxHeader.DLC = 8;
 		TxHeader.TransmitGlobalTime = DISABLE;
-		uint16_t txrpm[3]={
-				rpm[0]+512,
-				rpm[1]+512,
-				rpm[2]+512
-		};
+
+		TxHeader1.StdId = 0x302;
+		TxHeader1.RTR = CAN_RTR_DATA;
+		TxHeader1.IDE = CAN_ID_STD;
+		TxHeader1.DLC = 8;
+		TxHeader1.TransmitGlobalTime = DISABLE;
+
+		uint16_t txrpm[3] = { rpm[0] + 512, rpm[1] + 512, rpm[2] + 512 };
 		xprintf("%d\t,%d\t,%d\r\n", txrpm[0], txrpm[1], txrpm[2]);
 		//for(int i=0;i<8;i++)TxData[i]=0;
-		TxData[0] = txrpm[0]&0xFF;
-		TxData[1] = ((txrpm[0]>>8)&0x3) + ((txrpm[1]<<2)&0xFC);
-		TxData[2] = ((txrpm[1]>>6)&0xF) + ((txrpm[2]<<4)&0xF0);
-		TxData[3] = (txrpm[2]>>4)&0x3F;
+		TxData[0] = txrpm[0] & 0xFF;
+		TxData[1] = ((txrpm[0] >> 8) & 0x3) + ((txrpm[1] << 2) & 0xFC);
+		TxData[2] = ((txrpm[1] >> 6) & 0xF) + ((txrpm[2] << 4) & 0xF0);
+		TxData[3] = (txrpm[2] >> 4) & 0x3F;
 //		xprintf("%d\t,%d\t,%d\t,%d\r\n", TxData[0], TxData[1], TxData[2], TxData[3]);
 		/* Request transmission */
 		if (HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox)
+				!= HAL_OK) {
+			/* Transmission request Error */
+			Error_Handler();
+		}
+		HAL_Delay(10);
+		while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) != 3) {
+		}
+		for(int i=0;i<2;i++){
+			TxData[i*2] = count[i] & 0xFF;
+			TxData[i*2+1] = count[i] >> 8;
+		}
+		if (HAL_CAN_AddTxMessage(&hcan, &TxHeader1, TxData, &TxMailbox)
 				!= HAL_OK) {
 			/* Transmission request Error */
 			Error_Handler();
